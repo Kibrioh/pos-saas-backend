@@ -53,6 +53,12 @@ def create_app(config_class=Config):
         allow_headers=["Content-Type", "Authorization", "X-Branch-ID", "Idempotency-Key"],
         max_age=600,
     )
+    @app.get("/api/cors-test")
+    def cors_test():
+        return jsonify({
+            "status": "success",
+            "message": "CORS test endpoint reached"
+        }), 200
     jwt.init_app(app)
 
     from utils.tenant_scope import register_tenant_scope_events
