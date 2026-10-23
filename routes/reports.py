@@ -1296,6 +1296,7 @@ def location_performance():
             "branch_name": branch.name,
             "is_active": branch.is_active,
             "location": branch.location,
+            "google_place_id": branch.google_place_id,
             "latitude": float(branch.latitude) if branch.latitude is not None else None,
             "longitude": float(branch.longitude) if branch.longitude is not None else None,
             "gross_sales": money(stats["gross_sales"]),
@@ -1389,7 +1390,8 @@ def location_performance():
         inventory=inventory_totals,
         branch_count=len(results),
         branch_count_with_coordinates=sum(
-            branch["latitude"] is not None and branch["longitude"] is not None
+            (branch["latitude"] is not None and branch["longitude"] is not None)
+            or bool(branch["google_place_id"])
             for branch in results
         ),
         branches=results,

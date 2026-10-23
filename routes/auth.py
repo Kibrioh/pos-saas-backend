@@ -46,6 +46,14 @@ def _branch_coordinates(latitude, longitude):
     return latitude, longitude, None
 
 
+def _branch_google_place_id(value):
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return None, None
+    if not isinstance(value, str) or len(value.strip()) > 8192:
+        return None, "Google Place ID must be a string of at most 8192 characters"
+    return value.strip(), None
+
+
 @auth_bp.post("/login")
 def login():
     data = _payload()
@@ -311,9 +319,17 @@ def create_branch():
     data = _payload()
     name = data.get("name")
     location = data.get("location")
-    latitude, longitude, coordinate_error = _branch_coordinates(
-        data.get("latitude"), data.get("longitude")
-    )
+    google_place_id, place_id_error = _branch_google_place_id(data.get("google_place_id"))
+    if place_id_error:
+        return jsonify(status="error", message=place_id_error), 400
+    if google_place_id:
+        if data.get("latitude") not in (None, "") or data.get("longitude") not in (None, ""):
+            return jsonify(status="error", message="Google coordinates are resolved when needed; enter coordinates manually to save them"), 400
+        latitude, longitude, coordinate_error = None, None, None
+    else:
+        latitude, longitude, coordinate_error = _branch_coordinates(
+            data.get("latitude"), data.get("longitude")
+        )
     if not isinstance(name, str) or not name.strip():
         return jsonify(status="error", message="Branch name is required"), 400
     if len(name.strip()) > 120:
@@ -334,6 +350,7 @@ def create_branch():
         tenant_id=g.tenant_id,
         name=normalized_name,
         location=location.strip() if location else None,
+        google_place_id=google_place_id,
         latitude=latitude,
         longitude=longitude,
     )
@@ -353,29 +370,51 @@ def create_branch():
 @manager_required
 def update_branch(branch_id):
     data = _payload()
-    allowed_fields = {"location", "latitude", "longitude"}
+    allowed_fields = {"location", "latitude", "longitude", "google_place_id"}
     if not data or set(data) - allowed_fields:
-        return jsonify(status="error", message="Provide branch location or coordinates to update"), 400
+        return jsonify(status="error", message="Provide a branch location, Google Place ID, or coordinates to update"), 400
 
     branch = Branch.query.filter_by(id=branch_id, tenant_id=g.tenant_id).first()
     if branch is None:
         return jsonify(status="error", message="Branch not found"), 404
 
+    location = branch.location
     if "location" in data:
         location = data["location"]
         if location is not None and (not isinstance(location, str) or len(location) > 200):
             return jsonify(status="error", message="Branch location must be at most 200 characters"), 400
-        branch.location = location.strip() if isinstance(location, str) and location.strip() else None
+        location = location.strip() if isinstance(location, str) and location.strip() else None
 
-    if "latitude" in data or "longitude" in data:
+    google_place_id = branch.google_place_id
+    if "google_place_id" in data:
+        google_place_id, place_id_error = _branch_google_place_id(data["google_place_id"])
+        if place_id_error:
+            return jsonify(status="error", message=place_id_error), 400
+        if google_place_id and (data.get("latitude") not in (None, "") or data.get("longitude") not in (None, "")):
+            return jsonify(status="error", message="Google coordinates are resolved when needed; enter coordinates manually to save them"), 400
+
+    if "google_place_id" not in data and ("latitude" in data or "longitude" in data):
+        google_place_id = None
+
+    if google_place_id:
+        latitude, longitude = None, None
+    elif "latitude" in data or "longitude" in data:
         latitude, longitude, coordinate_error = _branch_coordinates(
             data.get("latitude", branch.latitude),
             data.get("longitude", branch.longitude),
         )
         if coordinate_error:
             return jsonify(status="error", message=coordinate_error), 400
-        branch.latitude = latitude
-        branch.longitude = longitude
+    elif "location" in data and "google_place_id" not in data and not ("latitude" in data or "longitude" in data):
+        google_place_id = None
+        latitude, longitude = None, None
+    else:
+        latitude, longitude = branch.latitude, branch.longitude
+
+    branch.location = location
+    branch.google_place_id = google_place_id
+    branch.latitude = latitude
+    branch.longitude = longitude
 
     add_audit_event(int(get_jwt_identity()), "branch.location_updated", "branch", branch.id, {
         "location": branch.location,

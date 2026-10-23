@@ -51,6 +51,10 @@ class Branch(db.Model):
             "(latitude IS NOT NULL AND longitude IS NOT NULL)",
             name="ck_branches_coordinate_pair",
         ),
+        db.CheckConstraint(
+            "google_place_id IS NULL OR (latitude IS NULL AND longitude IS NULL)",
+            name="ck_branches_google_place_id_without_coordinates",
+        ),
     )
 
     id = db.Column(db.Integer, primary_key=True)
@@ -62,6 +66,7 @@ class Branch(db.Model):
     )
     name = db.Column(db.String(120), nullable=False)
     location = db.Column(db.String(200))
+    google_place_id = db.Column(db.Text)
     latitude = db.Column(db.Numeric(10, 7))
     longitude = db.Column(db.Numeric(10, 7))
     is_default = db.Column(db.Boolean, nullable=False, default=False)
@@ -80,6 +85,7 @@ class Branch(db.Model):
             "tenant_id": self.tenant_id,
             "name": self.name,
             "location": self.location,
+            "google_place_id": self.google_place_id,
             "latitude": float(self.latitude) if self.latitude is not None else None,
             "longitude": float(self.longitude) if self.longitude is not None else None,
             "is_default": self.is_default,
