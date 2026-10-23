@@ -83,7 +83,7 @@ Create a file named `.env` in the project root. It is private to your machine.
 |---------|---------|
 | `DATABASE_URL` | PostgreSQL connection string. `requirements.txt` installs the psycopg 3 driver, hence `postgresql+psycopg://`. |
 | `SECRET_KEY`, `JWT_SECRET_KEY` | Random secrets. Generate one with `python -c "import secrets; print(secrets.token_hex(32))"`. |
-| `FRONTEND_ORIGIN` | The one address the browser app is allowed to call from. It must match the address the frontend runs on exactly. |
+| `FRONTEND_ORIGIN` | The browser origin(s) allowed to call the API. Use scheme and host only (for example, `https://pos.example.com`), without a path. Multiple origins may be comma-separated. A trailing slash is normalized. |
 | `FLASK_DEBUG` | `True` for development. |
 | `PORT` | Port the API listens on (default 5000). |
 

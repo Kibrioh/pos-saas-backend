@@ -17,13 +17,37 @@ from routes import (
 )
 
 
+def _configured_frontend_origins(value):
+    """Return normalized origins from the FRONTEND_ORIGIN setting.
+
+    A comma-separated value is supported so local and deployed frontends can
+    both be allowed when needed. Browsers send an origin without a trailing
+    slash, so normalize that common configuration mismatch here.
+    """
+    if not value:
+        return []
+
+    values = value if isinstance(value, (list, tuple, set)) else str(value).split(",")
+    return [origin.strip().rstrip("/") for origin in values if origin.strip()]
+
+
 def create_app(config_class=Config):
     app = Flask(__name__)
     app.config.from_object(config_class)
     db.init_app(app)
     migrate.init_app(app, db)
-    cors.init_app(app, resources={r"/api/*": {"origins": app.config["FRONTEND_ORIGIN"]}},
-                  allow_headers=["Content-Type", "Authorization", "X-Branch-ID", "Idempotency-Key"])
+    frontend_origins = _configured_frontend_origins(app.config.get("FRONTEND_ORIGIN"))
+    if not frontend_origins:
+        app.logger.warning(
+            "FRONTEND_ORIGIN is unset; browser requests to /api/* will not pass CORS."
+        )
+    cors.init_app(
+        app,
+        resources={r"/api/*": {"origins": frontend_origins}},
+        methods=["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+        allow_headers=["Content-Type", "Authorization", "X-Branch-ID", "Idempotency-Key"],
+        max_age=600,
+    )
     jwt.init_app(app)
 
     from utils.tenant_scope import register_tenant_scope_events
