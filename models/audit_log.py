@@ -1,10 +1,17 @@
 from datetime import datetime, timezone
 
 from extensions import db
+from models.tenant_scope import BranchScoped
 
 
-class AuditLog(db.Model):
+class AuditLog(BranchScoped, db.Model):
     __tablename__ = "audit_logs"
+    __table_args__ = (
+        db.ForeignKeyConstraint(
+            ["tenant_id", "branch_id"], ["branches.tenant_id", "branches.id"],
+            name="fk_audit_logs_tenant_branch", ondelete="RESTRICT",
+        ),
+    )
 
     id = db.Column(db.Integer, primary_key=True)
     actor_user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)

@@ -16,6 +16,9 @@ bp = Blueprint("sales", __name__, url_prefix="/api/sales")
 def make_sale():
     user = get_current_user()
     payload = request.get_json(silent=True) or {}
+    idempotency_key = (request.headers.get("Idempotency-Key") or "").strip() or None
+    if idempotency_key is not None and len(idempotency_key) > 80:
+        return jsonify(status="error", message="Idempotency key must be at most 80 characters"), 400
     payment_method = str(payload.get("payment_method") or "cash").strip().lower()[:30]
     if payment_method not in {"cash", "card", "m-pesa"}:
         return jsonify(status="error", message="Payment method must be cash, card, or m-pesa"), 400
@@ -24,8 +27,15 @@ def make_sale():
     if user.role == "cashier":
         shift = get_current_shift(user.id, lock=True)
         if shift is None:
-            return jsonify(status="error", message="Open a cashier shift before completing a sale"), 409
-        shift_id = shift.id
+            existing_retry = (
+                Sale.query.filter_by(idempotency_key=idempotency_key).first()
+                if idempotency_key
+                else None
+            )
+            if existing_retry is None:
+                return jsonify(status="error", message="Open a cashier shift before completing a sale"), 409
+        else:
+            shift_id = shift.id
 
     try:
         sale = create_sale(
@@ -34,6 +44,7 @@ def make_sale():
             payment_method,
             shift_id,
             payload.get("amount_tendered"),
+            idempotency_key,
         )
     except ServiceError as err:
         return jsonify(status="error", message=str(err)), err.status_code
@@ -65,6 +76,9 @@ def my_sales():
 def get_sale(sale_id):
     sale = db.session.get(Sale, sale_id)
     if sale is None:
+        return jsonify(status="error", message="Sale not found"), 404
+    user = get_current_user()
+    if user.role == "cashier" and sale.user_id != user.id:
         return jsonify(status="error", message="Sale not found"), 404
     return jsonify(sale.to_dict())
 

@@ -8,17 +8,19 @@ from services.stock_service import (
     restock_product,
     update_restock,
 )
-from utils.auth import get_current_user, manager_required
+from utils.auth import get_current_user, login_required, manager_required
 
 bp = Blueprint("restocks", __name__, url_prefix="/api/restocks")
 
 
 @bp.get("")
+@login_required
 def all_restocks():
     return jsonify(list_restocks()), 200
 
 
 @bp.get("/<int:restock_id>")
+@login_required
 def get_restock(restock_id):
     try:
         return jsonify(get_restock_by_id(restock_id)), 200

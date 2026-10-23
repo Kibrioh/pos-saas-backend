@@ -2,12 +2,17 @@ from datetime import datetime, timezone
 from decimal import Decimal
 
 from extensions import db
+from models.tenant_scope import BranchScoped
 
 
-class SaleReturn(db.Model):
+class SaleReturn(BranchScoped, db.Model):
     __tablename__ = "sale_returns"
     __table_args__ = (
         db.CheckConstraint("refund_total >= 0", name="ck_sale_returns_total_nonnegative"),
+        db.ForeignKeyConstraint(
+            ["tenant_id", "branch_id"], ["branches.tenant_id", "branches.id"],
+            name="fk_sale_returns_tenant_branch", ondelete="RESTRICT",
+        ),
     )
 
     id = db.Column(db.Integer, primary_key=True)
@@ -38,11 +43,15 @@ class SaleReturn(db.Model):
         }
 
 
-class SaleReturnItem(db.Model):
+class SaleReturnItem(BranchScoped, db.Model):
     __tablename__ = "sale_return_items"
     __table_args__ = (
         db.CheckConstraint("quantity > 0", name="ck_sale_return_items_quantity_positive"),
         db.CheckConstraint("unit_price >= 0", name="ck_sale_return_items_price_nonnegative"),
+        db.ForeignKeyConstraint(
+            ["tenant_id", "branch_id"], ["branches.tenant_id", "branches.id"],
+            name="fk_sale_return_items_tenant_branch", ondelete="RESTRICT",
+        ),
     )
 
     id = db.Column(db.Integer, primary_key=True)

@@ -22,8 +22,12 @@ def create_app(config_class=Config):
     app.config.from_object(config_class)
     db.init_app(app)
     migrate.init_app(app, db)
-    cors.init_app(app, resources={r"/api/*": {"origins": app.config["FRONTEND_ORIGIN"]}})
+    cors.init_app(app, resources={r"/api/*": {"origins": app.config["FRONTEND_ORIGIN"]}},
+                  allow_headers=["Content-Type", "Authorization", "X-Branch-ID", "Idempotency-Key"])
     jwt.init_app(app)
+
+    from utils.tenant_scope import register_tenant_scope_events
+    register_tenant_scope_events()
 
     from routes.auth import auth_bp
     app.register_blueprint(auth_bp)

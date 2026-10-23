@@ -1,9 +1,9 @@
 # TechPoint POS: Backend
 
-REST API for the TechPoint point-of-sale system (Phase 2). It handles login and
-roles, products and categories, stock and restocks, sales, and reports. The
-React frontend lives in a separate repository (`pos-system`) and talks to this
-API over HTTP.
+REST API for the TechPoint point-of-sale system. It handles tenant onboarding,
+branch-scoped inventory and transactions, staff roles, reports, and POS
+operations. The React frontend lives in `pos-system` and talks to this API over
+HTTP.
 
 ## Tech stack
 
@@ -23,11 +23,13 @@ API over HTTP.
     ├── config.py           # reads settings from .env
     ├── extensions.py       # db, migrate, cors, jwt objects
     ├── models/             # User, Category, Product, Sale, SaleItem,
-    │                       # StockMovement, Restock
+    │                       # Tenant, Branch, StockMovement, Restock
     ├── routes/             # HTTP layer: auth, categories, products, sales,
     │                       # stock, restocks, reports
     ├── services/           # business logic: sales_service, stock_service
     ├── utils/auth.py       # login_required, manager_required
+    ├── utils/tenant_scope.py # tenant and branch query/write boundaries
+    ├── integrations/       # provider-neutral payment, eTIMS, billing contracts
     ├── migrations/         # database migrations
     ├── tests/              # automated tests
     └── seed.py             # sample data (see warning below)
@@ -87,9 +89,13 @@ Create a file named `.env` in the project root. It is private to your machine.
 
 There is no default database: if `DATABASE_URL` is missing, the app will not start.
 
-### 4. Create the tables
+### 4. Create or upgrade the tables
 
     flask db upgrade
+
+The tenant migration moves existing records into an `Existing POS Business`
+tenant and its `Main Branch` before requiring tenant and branch ownership on
+every business record.
 
 ### 5. (Optional) Sample data
 
@@ -115,11 +121,14 @@ Check it: <http://127.0.0.1:5000/api/health> should return
 
 1. `POST /api/auth/login` with a username and password returns an
    `access_token`.
-2. Create a manager with `POST /api/auth/manager-signup`. Public sign-up
-   creates a manager account whenever the username is available. Managers can
-   also register cashiers by signing in and calling `POST /api/auth/register`.
-3. Send the token on every protected request: `Authorization: Bearer <token>`.
-4. Two roles exist: `manager` and `cashier`.
+2. Create a business owner with `POST /api/auth/manager-signup`. Public sign-up
+   creates a tenant, its default branch, and the first manager when the username
+   is available. Managers can add staff with `POST /api/auth/register`.
+3. Send the token on protected requests: `Authorization: Bearer <token>`. Send
+   `X-Branch-ID: <id>` to select a branch; managers can select any active branch
+   in their business, while cashiers remain limited to their assigned branch.
+4. Each request is scoped to the signed-in user's business and active branch.
+   `manager` and `cashier` are the supported roles.
    - `login_required`: any logged-in user (manager or cashier)
    - `manager_required`: managers only
 
@@ -138,35 +147,38 @@ Errors use the shape `{"status": "error", "message": "..."}`.
 |--------|------|--------|---------|
 | POST | `/login` | public | `{username, password}` returns `access_token` and `user` |
 | GET | `/manager-signup-available` | public | Returns whether public manager sign-up is available |
-| POST | `/manager-signup` | public | `{name, username (3+ chars), password}`; creates a manager if the username is available and returns an access token |
-| GET | `/me` | login | the current user |
+| POST | `/manager-signup` | public | `{business_name, name, username (3+ chars), password}`; creates a tenant, default branch, manager, and access token |
+| GET | `/me` | login | the current user and active branch |
 | POST | `/register` | manager | `{username (3+ chars), name, password, role}`; password must be 8+ characters with uppercase, lowercase, and a special character |
 | POST | `/change-password` | login | `{old_password, new_password}`; new password must meet the same requirements |
 | GET | `/users` | manager | list all users (no password hashes) |
+| GET | `/branches` | login | list active business branches (cashiers see only their assigned branch) |
+| POST | `/branches` | manager | create a branch with `{name, location?}` |
 
 ### Products and categories
 
 | Method | Path | Access | Purpose |
 |--------|------|--------|---------|
-| GET | `/api/products` | public | list products |
-| GET | `/api/products/<id>` | public | one product |
+| GET | `/api/products` | login | list active products in the selected branch |
+| GET | `/api/products/<id>` | login | one product in the selected branch |
 | POST | `/api/products` | manager | create. Fields include `title`, `brand`, `barcode`, `unit_cost`, `description`, `price`, `stock_quantity`, `low_stock_threshold`, `thumbnail`, `category_id` |
 | PUT | `/api/products/<id>` | manager | update the same fields |
 | DELETE | `/api/products/<id>` | manager | archive from the active catalogue while preserving sales and stock history |
-| GET / POST | `/api/categories` | see code | list / create |
-| GET / PUT | `/api/categories/<id>` | see code | one / update |
+| GET | `/api/categories` | login | list categories for the business |
+| POST | `/api/categories` | manager | create a category |
+| GET / PUT | `/api/categories/<id>` | login / manager | one / update |
 
 ### Stock and restocks
 
 | Method | Path | Access | Purpose |
 |--------|------|--------|---------|
-| GET | `/api/stock` | see code | stock levels |
-| GET | `/api/stock/low`, `/api/stock/out` | see code | low and out-of-stock products |
-| GET | `/api/stock/movements` | see code | all stock movements |
-| GET | `/api/stock/movements/<product_id>` | see code | movements for one product |
+| GET | `/api/stock` | login | stock levels in the selected branch |
+| GET | `/api/stock/low`, `/api/stock/out` | login | low and out-of-stock products |
+| GET | `/api/stock/movements` | login | stock movements in the selected branch |
+| GET | `/api/stock/movements/<product_id>` | login | movements for one product |
 | POST | `/api/stock/adjust` | manager | `{product_id, delta, user_id, note}`; stock cannot go below zero |
 | POST | `/api/stock/restock` | manager | `{product_id, quantity, user_id, unit_cost, supplier, invoice_number, note}` |
-| GET / POST | `/api/restocks` | see code | list / create restocks |
+| GET / POST | `/api/restocks` | login / manager | list / create restocks |
 | GET / PUT / DELETE | `/api/restocks/<id>` | see code | one / update details / delete (reverses the stock) |
 | GET / POST | `/api/suppliers` | manager | list / create suppliers |
 | GET / POST | `/api/purchase-orders` | manager | list / create supplier orders |
@@ -191,6 +203,7 @@ Create a sale. The client sends only product ids and quantities, never prices:
 
     POST /api/sales
     Authorization: Bearer <token>
+    Idempotency-Key: <unique checkout retry key>
 
     {
       "payment_method": "cash",
@@ -201,7 +214,8 @@ Create a sale. The client sends only product ids and quantities, never prices:
       ]
     }
 
-Response `201`:
+Response `201`; repeating the same key and sale details returns the original
+sale rather than lowering stock again:
 
     {
       "id": 1,
@@ -246,6 +260,17 @@ See `routes/reports.py` for response fields and calculations.
 purchase order, and till actions to managers. Gross margin is based on the
 cost snapshot captured at sale time; sales without recorded costs are counted
 as missing cost data.
+
+## Provider integrations
+
+`integrations/contracts.py` defines provider-neutral interfaces for payment
+intents and refunds, fiscal invoice submission and status checks, and
+subscription checkout, cancellation, and webhook verification. Deployments
+can inject adapter instances through `PAYMENT_PROVIDER`, `ETIMS_PROVIDER`, and
+`SUBSCRIPTION_PROVIDER` app configuration. Credentials stay on the server and
+are not exposed to browser code or stored in the POS database. Live card/M-Pesa
+collection, KRA eTIMS submission, and paid subscription checkout need a real
+adapter and its credentials before they can be enabled.
 
 ### Health
 

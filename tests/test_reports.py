@@ -6,7 +6,7 @@ import pytest
 from app import create_app
 from config import TestConfig
 from extensions import db
-from models import User, Product, Sale, SaleItem
+from models import Branch, Tenant, User, Product, Sale, SaleItem
 
 
 @pytest.fixture
@@ -15,6 +15,15 @@ def app():
 
     with app.app_context():
         db.create_all()
+
+        tenant = Tenant(name="Test Business", slug="test-business")
+        db.session.add(tenant)
+        db.session.flush()
+        branch = Branch(tenant_id=tenant.id, name="Main Branch", is_default=True)
+        db.session.add(branch)
+        db.session.flush()
+        db.session.info["tenant_id"] = tenant.id
+        db.session.info["branch_id"] = branch.id
 
         manager = User(
             username="manager",
@@ -200,6 +209,52 @@ def test_best_selling_products(client):
     assert results[0]["quantity_sold"] == 3
     assert results[1]["product_title"] == "Keyboard"
     assert results[1]["quantity_sold"] == 2
+
+
+def test_new_signup_gets_an_isolated_business_and_default_branch(client):
+    response = client.post(
+        "/api/auth/manager-signup",
+        json={
+            "business_name": "Second Store",
+            "name": "Second Manager",
+            "username": "second-manager",
+            "password": "StrongPass!23",
+        },
+    )
+
+    assert response.status_code == 201
+    user = response.get_json()["user"]
+    assert user["tenant_id"] != 1
+    assert user["branch_id"] is not None
+
+    headers = {"Authorization": f"Bearer {response.get_json()['access_token']}"}
+    products = client.get("/api/products", headers=headers)
+    assert products.status_code == 200
+    assert products.get_json() == []
+
+
+def test_catalogue_requires_sign_in(client):
+    assert client.get("/api/products").status_code == 401
+    assert client.get("/api/categories").status_code == 401
+
+
+def test_sale_retry_key_does_not_deduct_stock_twice(client):
+    headers = manager_headers(client)
+    headers["Idempotency-Key"] = "checkout-retry-001"
+    request_body = {
+        "payment_method": "cash",
+        "amount_tendered": "50.00",
+        "items": [{"product_id": 1, "quantity": 1}],
+    }
+
+    first = client.post("/api/sales", headers=headers, json=request_body)
+    second = client.post("/api/sales", headers=headers, json=request_body)
+
+    assert first.status_code == 201
+    assert second.status_code == 201
+    assert first.get_json()["id"] == second.get_json()["id"]
+    product = client.get("/api/products/1", headers=headers).get_json()
+    assert product["stock_quantity"] == 1
 
 
 def test_dashboard_summary(client):

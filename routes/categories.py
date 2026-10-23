@@ -2,6 +2,7 @@ from flask import Blueprint, jsonify, request
 
 from extensions import db
 from models import Category
+from utils.auth import login_required, manager_required
 
 bp = Blueprint("categories", __name__, url_prefix="/api/categories")
 
@@ -23,18 +24,21 @@ def _unsupported_fields(payload):
 
 
 @bp.get("")
+@login_required
 def get_categories():
     categories = Category.query.order_by(Category.name.asc()).all()
     return jsonify([category.to_dict() for category in categories])
 
 
 @bp.get("/<int:category_id>")
+@login_required
 def get_category(category_id):
     category = Category.query.get_or_404(category_id)
     return jsonify(category.to_dict())
 
 
 @bp.post("")
+@manager_required
 def create_category():
     payload = _json_payload()
     if payload is None:
@@ -58,6 +62,7 @@ def create_category():
 
 
 @bp.put("/<int:category_id>")
+@manager_required
 def update_category(category_id):
     category = Category.query.get_or_404(category_id)
     payload = _json_payload()

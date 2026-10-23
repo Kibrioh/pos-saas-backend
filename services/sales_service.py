@@ -1,5 +1,10 @@
 from collections import OrderedDict
 from decimal import Decimal, InvalidOperation
+import hashlib
+import json
+
+from flask import g
+from sqlalchemy import text
 
 from extensions import db
 from models import Product, Sale, SaleItem, User
@@ -51,10 +56,34 @@ def _cash_tender_and_change(amount_tendered, total):
 
 
 def create_sale(user_id, raw_items, payment_method="cash", shift_id=None,
-                amount_tendered=None):
+                amount_tendered=None, idempotency_key=None):
     wanted = _clean_items(raw_items)
+    request_hash = hashlib.sha256(json.dumps({
+        "items": sorted(wanted.items()),
+        "payment_method": payment_method,
+        "amount_tendered": str(amount_tendered) if amount_tendered is not None else None,
+    }, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
 
     try:
+        if idempotency_key and db.session.get_bind().dialect.name == "postgresql":
+            lock_key = f"sale:{g.get('tenant_id')}:{g.get('branch_id')}:{idempotency_key}"
+            db.session.execute(
+                text("SELECT pg_advisory_xact_lock(hashtext(:lock_key))"),
+                {"lock_key": lock_key},
+            )
+
+        if idempotency_key:
+            existing_sale = Sale.query.filter_by(idempotency_key=idempotency_key).first()
+            if existing_sale is not None:
+                if existing_sale.user_id != user_id:
+                    raise ServiceError("This checkout retry key is already in use.", 409)
+                if existing_sale.idempotency_hash != request_hash:
+                    raise ServiceError(
+                        "This checkout retry key was already used for different sale details.",
+                        409,
+                    )
+                return existing_sale
+
         user = db.session.get(User, user_id)
         if user is None:
             raise ServiceError("Cashier not found.", 401)
@@ -105,6 +134,8 @@ def create_sale(user_id, raw_items, payment_method="cash", shift_id=None,
             payment_method=payment_method,
             amount_tendered=tendered,
             change_given=change_given,
+            idempotency_key=idempotency_key,
+            idempotency_hash=request_hash if idempotency_key else None,
         )
         db.session.add(sale)
         db.session.flush()  # gets sale.id without committing yet

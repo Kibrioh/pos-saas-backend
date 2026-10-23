@@ -1,12 +1,17 @@
 from datetime import datetime, timezone
 from extensions import db
+from models.tenant_scope import BranchScoped
 
-class StockMovement(db.Model):
+class StockMovement(BranchScoped, db.Model):
     __tablename__ = "stock_movements"
     __table_args__ = (
         db.CheckConstraint("quantity_delta <> 0", name="ck_stock_movements_nonzero_delta"),
         db.CheckConstraint("stock_before >= 0", name="ck_stock_movements_before_nonnegative"),
         db.CheckConstraint("stock_after >= 0", name="ck_stock_movements_after_nonnegative"),
+        db.ForeignKeyConstraint(
+            ["tenant_id", "branch_id"], ["branches.tenant_id", "branches.id"],
+            name="fk_stock_movements_tenant_branch", ondelete="RESTRICT",
+        ),
     )
     id = db.Column(db.Integer, primary_key=True)
     product_id = db.Column(db.Integer, db.ForeignKey("products.id", ondelete="RESTRICT"), nullable=False, index=True)

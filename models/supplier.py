@@ -2,13 +2,15 @@ from datetime import datetime, timezone
 from sqlalchemy import true
 
 from extensions import db
+from models.tenant_scope import TenantScoped
 
 
-class Supplier(db.Model):
+class Supplier(TenantScoped, db.Model):
     __tablename__ = "suppliers"
+    __table_args__ = (db.UniqueConstraint("tenant_id", "name", name="uq_suppliers_tenant_name"),)
 
     id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String(160), nullable=False, unique=True)
+    name = db.Column(db.String(160), nullable=False)
     contact_name = db.Column(db.String(120))
     phone = db.Column(db.String(40))
     email = db.Column(db.String(160))

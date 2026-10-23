@@ -2,10 +2,17 @@ from datetime import datetime, timezone
 from decimal import Decimal
 
 from extensions import db
+from models.tenant_scope import BranchScoped
 
 
-class CashierShift(db.Model):
+class CashierShift(BranchScoped, db.Model):
     __tablename__ = "cashier_shifts"
+    __table_args__ = (
+        db.ForeignKeyConstraint(
+            ["tenant_id", "branch_id"], ["branches.tenant_id", "branches.id"],
+            name="fk_cashier_shifts_tenant_branch", ondelete="RESTRICT",
+        ),
+    )
 
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="RESTRICT"), nullable=False, index=True)

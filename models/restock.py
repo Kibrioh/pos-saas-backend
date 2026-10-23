@@ -1,14 +1,19 @@
 from datetime import datetime, timezone
 from extensions import db
+from models.tenant_scope import BranchScoped
 
 
-class Restock(db.Model):
+class Restock(BranchScoped, db.Model):
     __tablename__ = "restocks"
     __table_args__ = (
         db.CheckConstraint("quantity > 0", name="ck_restocks_quantity_positive"),
         db.CheckConstraint(
             "unit_cost IS NULL OR unit_cost >= 0",
             name="ck_restocks_unit_cost_nonnegative",
+        ),
+        db.ForeignKeyConstraint(
+            ["tenant_id", "branch_id"], ["branches.tenant_id", "branches.id"],
+            name="fk_restocks_tenant_branch", ondelete="RESTRICT",
         ),
     )
 

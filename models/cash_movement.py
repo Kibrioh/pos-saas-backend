@@ -1,12 +1,17 @@
 from datetime import datetime, timezone
 
 from extensions import db
+from models.tenant_scope import BranchScoped
 
 
-class CashMovement(db.Model):
+class CashMovement(BranchScoped, db.Model):
     __tablename__ = "cash_movements"
     __table_args__ = (
         db.CheckConstraint("amount > 0", name="ck_cash_movements_amount_positive"),
+        db.ForeignKeyConstraint(
+            ["tenant_id", "branch_id"], ["branches.tenant_id", "branches.id"],
+            name="fk_cash_movements_tenant_branch", ondelete="RESTRICT",
+        ),
     )
 
     id = db.Column(db.Integer, primary_key=True)

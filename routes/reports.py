@@ -2,7 +2,7 @@ from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, g, has_request_context, jsonify, request
 from sqlalchemy import case, func, or_
 from sqlalchemy.orm import joinedload, selectinload
 
@@ -26,6 +26,18 @@ BUSINESS_TIMEZONE = ZoneInfo("Africa/Nairobi")
 UTC = timezone.utc
 
 
+def business_timezone():
+    timezone_name = (
+        g.get("business_timezone", "Africa/Nairobi")
+        if has_request_context()
+        else "Africa/Nairobi"
+    )
+    try:
+        return ZoneInfo(timezone_name)
+    except (KeyError, TypeError, ValueError):
+        return BUSINESS_TIMEZONE
+
+
 def _date_range(start_text, end_text, default_days=None):
     try:
         start_date = date.fromisoformat(start_text) if start_text else None
@@ -37,12 +49,12 @@ def _date_range(start_text, end_text, default_days=None):
         )
 
     if start_date is None and end_date is None and default_days:
-        end_date = datetime.now(BUSINESS_TIMEZONE).date()
+        end_date = datetime.now(business_timezone()).date()
         start_date = end_date - timedelta(days=default_days - 1)
     elif start_date is None and end_date is not None and default_days:
         start_date = end_date - timedelta(days=default_days - 1)
     elif end_date is None and start_date is not None:
-        end_date = datetime.now(BUSINESS_TIMEZONE).date()
+        end_date = datetime.now(business_timezone()).date()
 
     if start_date and end_date and start_date > end_date:
         return None, None, (
@@ -57,7 +69,7 @@ def _utc_boundary(day, at_end=False):
         return None
     if at_end:
         day += timedelta(days=1)
-    local_boundary = datetime.combine(day, time.min, tzinfo=BUSINESS_TIMEZONE)
+    local_boundary = datetime.combine(day, time.min, tzinfo=business_timezone())
     return local_boundary.astimezone(UTC)
 
 
@@ -107,7 +119,7 @@ def _as_utc(value):
 
 
 def _as_business_time(value):
-    return _as_utc(value).astimezone(BUSINESS_TIMEZONE)
+    return _as_utc(value).astimezone(business_timezone())
 
 
 def _rate(numerator, denominator):
@@ -491,7 +503,7 @@ def _summary_for_period(start_date, end_date):
 
 
 def _inventory_snapshot():
-    today = datetime.now(BUSINESS_TIMEZONE).date()
+    today = datetime.now(business_timezone()).date()
     sales_start = today - timedelta(days=29)
     sold_rows = db.session.query(
         SaleItem.product_id,

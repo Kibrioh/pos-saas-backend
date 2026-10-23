@@ -2,10 +2,17 @@ from datetime import datetime, timezone
 from decimal import Decimal
 
 from extensions import db
+from models.tenant_scope import BranchScoped
 
 
-class PurchaseOrder(db.Model):
+class PurchaseOrder(BranchScoped, db.Model):
     __tablename__ = "purchase_orders"
+    __table_args__ = (
+        db.ForeignKeyConstraint(
+            ["tenant_id", "branch_id"], ["branches.tenant_id", "branches.id"],
+            name="fk_purchase_orders_tenant_branch", ondelete="RESTRICT",
+        ),
+    )
 
     id = db.Column(db.Integer, primary_key=True)
     supplier_id = db.Column(db.Integer, db.ForeignKey("suppliers.id", ondelete="RESTRICT"), nullable=False, index=True)
@@ -32,13 +39,17 @@ class PurchaseOrder(db.Model):
         }
 
 
-class PurchaseOrderItem(db.Model):
+class PurchaseOrderItem(BranchScoped, db.Model):
     __tablename__ = "purchase_order_items"
     __table_args__ = (
         db.CheckConstraint("quantity > 0", name="ck_purchase_order_items_quantity_positive"),
         db.CheckConstraint("received_quantity >= 0", name="ck_purchase_order_items_received_nonnegative"),
         db.CheckConstraint("received_quantity <= quantity", name="ck_purchase_order_items_received_lte_ordered"),
         db.CheckConstraint("unit_cost >= 0", name="ck_purchase_order_items_unit_cost_nonnegative"),
+        db.ForeignKeyConstraint(
+            ["tenant_id", "branch_id"], ["branches.tenant_id", "branches.id"],
+            name="fk_purchase_order_items_tenant_branch", ondelete="RESTRICT",
+        ),
     )
 
     id = db.Column(db.Integer, primary_key=True)

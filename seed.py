@@ -7,6 +7,8 @@ from faker import Faker
 from app import create_app
 from extensions import db
 from models import (
+    Tenant,
+    Branch,
     User,
     Category,
     Product,
@@ -21,6 +23,29 @@ app = create_app()
 
 with app.app_context():
     try:
+        tenant = Tenant.query.order_by(Tenant.id.asc()).first()
+        if tenant is None:
+            tenant = Tenant(
+                name="TechPoint Demo Business",
+                slug="techpoint-demo-business",
+            )
+            db.session.add(tenant)
+            db.session.flush()
+        branch = Branch.query.filter_by(
+            tenant_id=tenant.id,
+            is_default=True,
+        ).first()
+        if branch is None:
+            branch = Branch(
+                tenant_id=tenant.id,
+                name="Main Branch",
+                is_default=True,
+            )
+            db.session.add(branch)
+            db.session.flush()
+        db.session.info["tenant_id"] = tenant.id
+        db.session.info["branch_id"] = branch.id
+
         #This deletes all records in these tables.
         db.session.execute(
             text("""
@@ -31,6 +56,7 @@ with app.app_context():
                     sales,
                     products,
                     categories,
+                    suppliers,
                     users
                 RESTART IDENTITY CASCADE
             """)

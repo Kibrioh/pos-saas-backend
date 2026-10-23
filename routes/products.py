@@ -7,7 +7,7 @@ from extensions import db
 from models import Category, Product
 from services.audit_service import add_audit_event
 
-from utils.auth import manager_required
+from utils.auth import login_required, manager_required
 bp = Blueprint("products", __name__, url_prefix="/api/products")
 
 
@@ -75,6 +75,7 @@ def _get_category(category_id):
 
 
 @bp.get("")
+@login_required
 def get_products():
     products = (
         Product.query
@@ -86,6 +87,7 @@ def get_products():
 
 
 @bp.get("/<int:product_id>")
+@login_required
 def get_product(product_id):
     product = Product.query.filter_by(
         id=product_id,
