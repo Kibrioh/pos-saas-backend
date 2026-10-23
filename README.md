@@ -153,7 +153,14 @@ Errors use the shape `{"status": "error", "message": "..."}`.
 | POST | `/change-password` | login | `{old_password, new_password}`; new password must meet the same requirements |
 | GET | `/users` | manager | list all users (no password hashes) |
 | GET | `/branches` | login | list active business branches (cashiers see only their assigned branch) |
-| POST | `/branches` | manager | create a branch with `{name, location?}` |
+| POST | `/branches` | manager | create a branch with `{name, location?, latitude?, longitude?}`; coordinates must be provided together and within valid ranges |
+| PATCH | `/branches/<id>` | manager | update `{location?, latitude?, longitude?}` for a branch in the manager's business |
+
+### Reports: `/api/reports`
+
+| Method | Path | Access | Purpose |
+|--------|------|--------|---------|
+| GET | `/location-performance?start_date=YYYY-MM-DD&end_date=YYYY-MM-DD` | manager | compare sales, margin, returns, stock levels, and stockout events across the business's branches; defaults to the last 30 days |
 
 ### Products and categories
 

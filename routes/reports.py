@@ -8,6 +8,7 @@ from sqlalchemy.orm import joinedload, selectinload
 
 from extensions import db
 from models import (
+    Branch,
     CashierShift,
     Product,
     PurchaseOrder,
@@ -16,10 +17,12 @@ from models import (
     SaleItem,
     SaleReturn,
     SaleReturnItem,
+    StockMovement,
     User,
 )
 from services.shift_service import expected_cash_for_shift
 from utils.auth import manager_required
+from utils.tenant_scope import include_all_branches
 
 bp = Blueprint("reports", __name__, url_prefix="/api/reports")
 BUSINESS_TIMEZONE = ZoneInfo("Africa/Nairobi")
@@ -1121,4 +1124,273 @@ def manager_dashboard():
         ],
         inventory=inventory,
         shifts=shifts,
+    ), 200
+
+
+@bp.get("/location-performance")
+@manager_required
+def location_performance():
+    start_date, end_date, error = _date_range(
+        request.args.get("start_date"),
+        request.args.get("end_date"),
+        default_days=30,
+    )
+    if error:
+        return error
+
+    start_at = _utc_boundary(start_date)
+    end_at = _utc_boundary(end_date, at_end=True)
+
+    # Managers can compare all branches in their own tenant, regardless
+    # of the currently selected branch. The scope helper keeps tenant filtering.
+    with include_all_branches():
+        branches = Branch.query.filter_by(
+            tenant_id=g.tenant_id,
+        ).order_by(Branch.name.asc()).all()
+        branch_stats = {
+            branch.id: {
+                "gross_sales": Decimal("0"),
+                "refund_total": Decimal("0"),
+                "gross_profit": Decimal("0"),
+                "transaction_count": 0,
+                "units_sold": 0,
+                "units_returned": 0,
+                "costed_units": 0,
+            }
+            for branch in branches
+        }
+
+        sales_rows = db.session.query(
+            Sale.branch_id,
+            func.coalesce(func.sum(Sale.total_amount), 0),
+            func.count(Sale.id),
+        ).filter(
+            Sale.created_at >= start_at,
+            Sale.created_at < end_at,
+        ).group_by(Sale.branch_id).all()
+        for branch_id, gross_sales, transaction_count in sales_rows:
+            if branch_id in branch_stats:
+                branch_stats[branch_id]["gross_sales"] = _decimal(gross_sales)
+                branch_stats[branch_id]["transaction_count"] = int(transaction_count)
+
+        refund_rows = db.session.query(
+            Sale.branch_id,
+            func.coalesce(func.sum(SaleReturn.refund_total), 0),
+        ).join(
+            Sale, Sale.id == SaleReturn.sale_id
+        ).filter(
+            Sale.created_at >= start_at,
+            Sale.created_at < end_at,
+        ).group_by(Sale.branch_id).all()
+        for branch_id, refund_total in refund_rows:
+            if branch_id in branch_stats:
+                branch_stats[branch_id]["refund_total"] = _decimal(refund_total)
+
+        item_rows = db.session.query(
+            Sale.branch_id,
+            func.coalesce(func.sum(SaleItem.quantity), 0),
+            func.coalesce(func.sum(case(
+                (SaleItem.unit_cost.is_not(None), SaleItem.quantity),
+                else_=0,
+            )), 0),
+            func.coalesce(func.sum(case(
+                (
+                    SaleItem.unit_cost.is_not(None),
+                    (SaleItem.unit_price - SaleItem.unit_cost) * SaleItem.quantity,
+                ),
+                else_=0,
+            )), 0),
+        ).join(
+            Sale, Sale.id == SaleItem.sale_id
+        ).filter(
+            Sale.created_at >= start_at,
+            Sale.created_at < end_at,
+        ).group_by(Sale.branch_id).all()
+        for branch_id, units_sold, costed_units, sale_profit in item_rows:
+            if branch_id in branch_stats:
+                branch_stats[branch_id]["units_sold"] = int(units_sold)
+                branch_stats[branch_id]["costed_units"] = int(costed_units)
+                branch_stats[branch_id]["gross_profit"] = _decimal(sale_profit)
+
+        return_rows = db.session.query(
+            Sale.branch_id,
+            func.coalesce(func.sum(SaleReturnItem.quantity), 0),
+            func.coalesce(func.sum(case(
+                (
+                    SaleReturnItem.unit_cost.is_not(None),
+                    case(
+                        (
+                            SaleReturnItem.restock.is_(True),
+                            SaleReturnItem.unit_cost * SaleReturnItem.quantity,
+                        ),
+                        else_=0,
+                    ) - SaleReturnItem.unit_price * SaleReturnItem.quantity,
+                ),
+                else_=0,
+            )), 0),
+        ).join(
+            SaleReturn, SaleReturn.id == SaleReturnItem.sale_return_id
+        ).join(
+            Sale, Sale.id == SaleReturn.sale_id
+        ).filter(
+            Sale.created_at >= start_at,
+            Sale.created_at < end_at,
+        ).group_by(Sale.branch_id).all()
+        for branch_id, units_returned, return_profit in return_rows:
+            if branch_id in branch_stats:
+                branch_stats[branch_id]["units_returned"] = int(units_returned)
+                branch_stats[branch_id]["gross_profit"] += _decimal(return_profit)
+
+        inventory_rows = db.session.query(
+            Product.branch_id,
+            func.count(Product.id),
+            func.coalesce(func.sum(Product.stock_quantity), 0),
+            func.coalesce(func.sum(case(
+                (Product.stock_quantity <= Product.low_stock_threshold, 1),
+                else_=0,
+            )), 0),
+            func.coalesce(func.sum(case(
+                (Product.stock_quantity == 0, 1),
+                else_=0,
+            )), 0),
+        ).filter(
+            Product.is_active.is_(True),
+        ).group_by(Product.branch_id).all()
+        inventory_by_branch = {
+            branch_id: {
+                "active_product_count": int(product_count),
+                "stock_units": int(stock_units),
+                "low_stock_product_count": int(low_stock_count),
+                "out_of_stock_product_count": int(out_of_stock_count),
+            }
+            for branch_id, product_count, stock_units, low_stock_count, out_of_stock_count
+            in inventory_rows
+        }
+
+        stockout_rows = db.session.query(
+            StockMovement.branch_id,
+            func.count(StockMovement.id),
+        ).filter(
+            StockMovement.created_at >= start_at,
+            StockMovement.created_at < end_at,
+            StockMovement.movement_type == "sale",
+            StockMovement.stock_after == 0,
+        ).group_by(StockMovement.branch_id).all()
+        stockout_events_by_branch = {
+            branch_id: int(count) for branch_id, count in stockout_rows
+        }
+
+    results = []
+    for branch in branches:
+        stats = branch_stats[branch.id]
+        net_sales = stats["gross_sales"] - stats["refund_total"]
+        net_units_sold = max(0, stats["units_sold"] - stats["units_returned"])
+        inventory = inventory_by_branch.get(branch.id, {
+            "active_product_count": 0,
+            "stock_units": 0,
+            "low_stock_product_count": 0,
+            "out_of_stock_product_count": 0,
+        })
+        results.append({
+            "branch_id": branch.id,
+            "branch_name": branch.name,
+            "is_active": branch.is_active,
+            "location": branch.location,
+            "latitude": float(branch.latitude) if branch.latitude is not None else None,
+            "longitude": float(branch.longitude) if branch.longitude is not None else None,
+            "gross_sales": money(stats["gross_sales"]),
+            "net_sales": money(net_sales),
+            "refund_total": money(stats["refund_total"]),
+            "refund_rate": _rate(stats["refund_total"], stats["gross_sales"]),
+            "transaction_count": stats["transaction_count"],
+            "average_basket": money(
+                net_sales / stats["transaction_count"]
+                if stats["transaction_count"] else Decimal("0")
+            ),
+            "gross_profit": money(stats["gross_profit"]),
+            "gross_margin_rate": (
+                _rate(stats["gross_profit"], net_sales)
+                if stats["costed_units"] else None
+            ),
+            "units_sold": stats["units_sold"],
+            "net_units_sold": net_units_sold,
+            **inventory,
+            "stockout_events": stockout_events_by_branch.get(branch.id, 0),
+        })
+
+    results.sort(key=lambda branch: (
+        Decimal(branch["net_sales"]), branch["transaction_count"]
+    ), reverse=True)
+    inventory_totals = {
+        key: sum(branch[key] for branch in results)
+        for key in (
+            "active_product_count",
+            "stock_units",
+            "low_stock_product_count",
+            "out_of_stock_product_count",
+            "stockout_events",
+        )
+    }
+    total_gross_sales = sum(
+        (stats["gross_sales"] for stats in branch_stats.values()), Decimal("0")
+    )
+    total_refunds = sum(
+        (stats["refund_total"] for stats in branch_stats.values()), Decimal("0")
+    )
+    total_net_sales = total_gross_sales - total_refunds
+    total_gross_profit = sum(
+        (stats["gross_profit"] for stats in branch_stats.values()), Decimal("0")
+    )
+    total_transactions = sum(
+        stats["transaction_count"] for stats in branch_stats.values()
+    )
+    total_units_sold = sum(stats["units_sold"] for stats in branch_stats.values())
+    total_units_returned = sum(
+        stats["units_returned"] for stats in branch_stats.values()
+    )
+    total_costed_units = sum(
+        stats["costed_units"] for stats in branch_stats.values()
+    )
+    overall = {
+        "gross_sales": total_gross_sales,
+        "net_sales": total_net_sales,
+        "gross_profit": total_gross_profit,
+        "gross_margin_rate": (
+            _rate(total_gross_profit, total_net_sales)
+            if total_costed_units else None
+        ),
+        "refund_total": total_refunds,
+        "refund_rate": _rate(total_refunds, total_gross_sales),
+        "transaction_count": total_transactions,
+        "average_sale": (
+            total_net_sales / total_transactions
+            if total_transactions else Decimal("0")
+        ),
+        "units_sold": total_units_sold,
+        "net_units_sold": max(0, total_units_sold - total_units_returned),
+        "average_items_per_transaction": (
+            round(max(0, total_units_sold - total_units_returned) / total_transactions, 2)
+            if total_transactions else 0
+        ),
+        "costed_units": total_costed_units,
+        "items_without_cost": max(0, total_units_sold - total_costed_units),
+        "cost_coverage_rate": _rate(
+            Decimal(total_costed_units), Decimal(total_units_sold)
+        ),
+    }
+    return jsonify(
+        status="success",
+        timezone=business_timezone().key,
+        period={
+            "start_date": start_date.isoformat(),
+            "end_date": end_date.isoformat(),
+        },
+        summary=_summary_response(overall),
+        inventory=inventory_totals,
+        branch_count=len(results),
+        branch_count_with_coordinates=sum(
+            branch["latitude"] is not None and branch["longitude"] is not None
+            for branch in results
+        ),
+        branches=results,
     ), 200

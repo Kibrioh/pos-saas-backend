@@ -1,9 +1,29 @@
+from contextlib import contextmanager
+
 from flask import g, has_request_context
 from sqlalchemy import event, select
 from sqlalchemy.orm import Session, with_loader_criteria
 
 
 _registered = False
+
+
+@contextmanager
+def include_all_branches():
+    """Temporarily relax branch filtering while preserving tenant filtering."""
+    from extensions import db
+
+    session = db.session()
+    option_name = "include_all_branches"
+    previous = session.info.get(option_name)
+    session.info[option_name] = True
+    try:
+        yield
+    finally:
+        if previous is None:
+            session.info.pop(option_name, None)
+        else:
+            session.info[option_name] = previous
 
 
 def register_tenant_scope_events():
@@ -38,7 +58,14 @@ def register_tenant_scope_events():
         branch_id = g.get("branch_id") if has_request_context() else None
         if branch_id is None:
             branch_id = execute_state.session.info.get("branch_id")
-        if branch_id is not None:
+        include_all_branches = (
+            execute_state.is_select
+            and (
+                execute_state.execution_options.get("include_all_branches", False)
+                or execute_state.session.info.get("include_all_branches", False)
+            )
+        )
+        if branch_id is not None and not include_all_branches:
             statement = statement.options(
                 with_loader_criteria(
                     BranchScoped,

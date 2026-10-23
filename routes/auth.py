@@ -1,5 +1,6 @@
 import re
 import secrets
+from decimal import Decimal, InvalidOperation
 
 from flask import Blueprint, g, request, jsonify
 from flask_jwt_extended import create_access_token, get_jwt_identity
@@ -18,6 +19,31 @@ VALID_ROLES = ("manager", "cashier")
 def _payload():
     data = request.get_json(silent=True)
     return data if isinstance(data, dict) else {}
+
+
+def _branch_coordinates(latitude, longitude):
+    def parse(value, label, minimum, maximum):
+        if value is None or (isinstance(value, str) and not value.strip()):
+            return None, None
+        if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+            return None, f"Branch {label} must be a number"
+        try:
+            coordinate = Decimal(str(value).strip())
+        except (InvalidOperation, ValueError):
+            return None, f"Branch {label} must be a number"
+        if not coordinate.is_finite() or coordinate < minimum or coordinate > maximum:
+            return None, f"Branch {label} must be between {minimum} and {maximum}"
+        return coordinate, None
+
+    latitude, error = parse(latitude, "latitude", -90, 90)
+    if error:
+        return None, None, error
+    longitude, error = parse(longitude, "longitude", -180, 180)
+    if error:
+        return None, None, error
+    if (latitude is None) != (longitude is None):
+        return None, None, "Enter both latitude and longitude, or leave both blank"
+    return latitude, longitude, None
 
 
 @auth_bp.post("/login")
@@ -285,12 +311,17 @@ def create_branch():
     data = _payload()
     name = data.get("name")
     location = data.get("location")
+    latitude, longitude, coordinate_error = _branch_coordinates(
+        data.get("latitude"), data.get("longitude")
+    )
     if not isinstance(name, str) or not name.strip():
         return jsonify(status="error", message="Branch name is required"), 400
     if len(name.strip()) > 120:
         return jsonify(status="error", message="Branch name must be at most 120 characters"), 400
     if location is not None and (not isinstance(location, str) or len(location) > 200):
         return jsonify(status="error", message="Branch location must be at most 200 characters"), 400
+    if coordinate_error:
+        return jsonify(status="error", message=coordinate_error), 400
 
     normalized_name = name.strip()
     if Branch.query.filter(
@@ -303,12 +334,53 @@ def create_branch():
         tenant_id=g.tenant_id,
         name=normalized_name,
         location=location.strip() if location else None,
+        latitude=latitude,
+        longitude=longitude,
     )
     db.session.add(branch)
     db.session.flush()
     add_audit_event(int(get_jwt_identity()), "branch.created", "branch", branch.id, {
         "name": branch.name,
         "location": branch.location,
+        "latitude": branch.to_dict()["latitude"],
+        "longitude": branch.to_dict()["longitude"],
     })
     db.session.commit()
     return jsonify(status="success", branch=branch.to_dict()), 201
+
+
+@auth_bp.patch("/branches/<int:branch_id>")
+@manager_required
+def update_branch(branch_id):
+    data = _payload()
+    allowed_fields = {"location", "latitude", "longitude"}
+    if not data or set(data) - allowed_fields:
+        return jsonify(status="error", message="Provide branch location or coordinates to update"), 400
+
+    branch = Branch.query.filter_by(id=branch_id, tenant_id=g.tenant_id).first()
+    if branch is None:
+        return jsonify(status="error", message="Branch not found"), 404
+
+    if "location" in data:
+        location = data["location"]
+        if location is not None and (not isinstance(location, str) or len(location) > 200):
+            return jsonify(status="error", message="Branch location must be at most 200 characters"), 400
+        branch.location = location.strip() if isinstance(location, str) and location.strip() else None
+
+    if "latitude" in data or "longitude" in data:
+        latitude, longitude, coordinate_error = _branch_coordinates(
+            data.get("latitude", branch.latitude),
+            data.get("longitude", branch.longitude),
+        )
+        if coordinate_error:
+            return jsonify(status="error", message=coordinate_error), 400
+        branch.latitude = latitude
+        branch.longitude = longitude
+
+    add_audit_event(int(get_jwt_identity()), "branch.location_updated", "branch", branch.id, {
+        "location": branch.location,
+        "latitude": branch.to_dict()["latitude"],
+        "longitude": branch.to_dict()["longitude"],
+    })
+    db.session.commit()
+    return jsonify(status="success", branch=branch.to_dict()), 200

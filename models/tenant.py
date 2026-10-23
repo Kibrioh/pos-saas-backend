@@ -38,6 +38,19 @@ class Branch(db.Model):
     __table_args__ = (
         db.UniqueConstraint("tenant_id", "name", name="uq_branches_tenant_name"),
         db.UniqueConstraint("tenant_id", "id", name="uq_branches_tenant_id_id"),
+        db.CheckConstraint(
+            "latitude IS NULL OR latitude BETWEEN -90 AND 90",
+            name="ck_branches_latitude_range",
+        ),
+        db.CheckConstraint(
+            "longitude IS NULL OR longitude BETWEEN -180 AND 180",
+            name="ck_branches_longitude_range",
+        ),
+        db.CheckConstraint(
+            "(latitude IS NULL AND longitude IS NULL) OR "
+            "(latitude IS NOT NULL AND longitude IS NOT NULL)",
+            name="ck_branches_coordinate_pair",
+        ),
     )
 
     id = db.Column(db.Integer, primary_key=True)
@@ -49,6 +62,8 @@ class Branch(db.Model):
     )
     name = db.Column(db.String(120), nullable=False)
     location = db.Column(db.String(200))
+    latitude = db.Column(db.Numeric(10, 7))
+    longitude = db.Column(db.Numeric(10, 7))
     is_default = db.Column(db.Boolean, nullable=False, default=False)
     is_active = db.Column(db.Boolean, nullable=False, default=True)
     created_at = db.Column(
@@ -65,6 +80,8 @@ class Branch(db.Model):
             "tenant_id": self.tenant_id,
             "name": self.name,
             "location": self.location,
+            "latitude": float(self.latitude) if self.latitude is not None else None,
+            "longitude": float(self.longitude) if self.longitude is not None else None,
             "is_default": self.is_default,
             "is_active": self.is_active,
             "created_at": self.created_at.isoformat(),
