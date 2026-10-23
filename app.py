@@ -37,6 +37,11 @@ def create_app(config_class=Config):
     db.init_app(app)
     migrate.init_app(app, db)
     frontend_origins = _configured_frontend_origins(app.config.get("FRONTEND_ORIGIN"))
+    app.logger.warning(
+        "CORS DIAGNOSTIC: raw FRONTEND_ORIGIN=%r; normalized=%r",
+        app.config.get("FRONTEND_ORIGIN"),
+        frontend_origins,
+    )
     if not frontend_origins:
         app.logger.warning(
             "FRONTEND_ORIGIN is unset; browser requests to /api/* will not pass CORS."
