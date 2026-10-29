@@ -89,36 +89,19 @@ Create a file named `.env` in the project root. It is private to your machine.
 
 There is no default database: if `DATABASE_URL` is missing, the app will not start.
 
-For a new empty database, also configure these one-time bootstrap values in
-the environment before running the migration. Use a strong manager password
-and keep it out of source control:
-
-    BOOTSTRAP_BUSINESS_NAME=Your business name
-    BOOTSTRAP_BRANCH_NAME=Main Branch
-    BOOTSTRAP_MANAGER_NAME=Business owner name
-    BOOTSTRAP_MANAGER_USERNAME=owner
-    BOOTSTRAP_MANAGER_PASSWORD=<strong password>
-
-### 4. Create or upgrade the tables and initial business
+### 4. Create or upgrade the tables
 
     flask db upgrade
 
-On a new database, the migrations create the schema, configure the initial
-business and default branch, create its manager login from the bootstrap
-environment values, and add the standard categories. Remove
-`BOOTSTRAP_MANAGER_PASSWORD` from the deployment environment after the first
-upgrade. Later upgrades preserve existing accounts and data and do not use the
-bootstrap values. The tenant migration also moves pre-existing records into an
-`Existing POS Business` tenant and its `Main Branch` before requiring tenant
-and branch ownership on every business record. Product catalog, prices, and
-stock are left empty so production starts with real inventory instead of demo
-products or transactions.
+The tenant migration moves existing records into an `Existing POS Business`
+tenant and its `Main Branch` before requiring tenant and branch ownership on
+every business record.
 
 ### 5. (Optional) Sample data
 
     python seed.py
 
-> **Development only:** `seed.py` first **deletes all rows** in users, categories,
+> **Warning:** `seed.py` first **deletes all rows** in users, categories,
 > products, sales, sale items, stock movements, restocks, shifts, suppliers,
 > purchase orders, returns, and audit history, then inserts demo
 > data. Run it only on a development database. The demo usernames and
