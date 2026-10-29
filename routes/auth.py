@@ -217,6 +217,83 @@ def me():
     return jsonify(status="success", user=user_data), 200
 
 
+@auth_bp.patch("/me")
+@login_required
+def update_me():
+    data = _payload()
+    user = get_current_user()
+    errors = {}
+    updates = {}
+
+    if "name" in data:
+        raw_name = data.get("name")
+        name = raw_name.strip() if isinstance(raw_name, str) else ""
+        if not name:
+            errors["name"] = "Name is required"
+        elif len(name) > 120:
+            errors["name"] = "At most 120 characters"
+        else:
+            updates["name"] = name
+
+    if "username" in data:
+        raw_username = data.get("username")
+        username = raw_username.strip().lower() if isinstance(raw_username, str) else ""
+        if len(username) < 3:
+            errors["username"] = "At least 3 characters"
+        elif len(username) > 80:
+            errors["username"] = "At most 80 characters"
+        elif User.query.filter(
+            db.func.lower(User.username) == username,
+            User.id != user.id,
+        ).first():
+            errors["username"] = "Username already exists"
+        else:
+            updates["username"] = username
+
+    tenant = Tenant.query.filter_by(id=user.tenant_id).first()
+    if "business_name" in data:
+        raw_business_name = data.get("business_name")
+        business_name = raw_business_name.strip() if isinstance(raw_business_name, str) else ""
+        if user.role != "manager":
+            errors["business_name"] = "Only a manager can update the business name"
+        elif not business_name:
+            errors["business_name"] = "Business name is required"
+        elif len(business_name) > 160:
+            errors["business_name"] = "At most 160 characters"
+        elif tenant is None:
+            errors["business_name"] = "Business account could not be found"
+        else:
+            updates["business_name"] = business_name
+
+    if errors:
+        return jsonify(status="error", message="Validation failed", errors=errors), 400
+    if not updates:
+        return jsonify(status="error", message="No profile details were provided"), 400
+
+    changed_fields = []
+    if "name" in updates and updates["name"] != user.name:
+        user.name = updates["name"]
+        changed_fields.append("name")
+    if "username" in updates and updates["username"] != user.username:
+        user.username = updates["username"]
+        changed_fields.append("username")
+    if "business_name" in updates and updates["business_name"] != tenant.name:
+        tenant.name = updates["business_name"]
+        changed_fields.append("business_name")
+
+    if changed_fields:
+        add_audit_event(user.id, "user.profile_updated", "user", user.id, {
+            "fields": changed_fields,
+        })
+        db.session.commit()
+
+    user_data = user.to_dict()
+    user_data["active_branch_id"] = g.branch_id
+    user_data["active_branch"] = g.active_branch.to_dict()
+    user_data["business"] = tenant.to_dict() if tenant else None
+    return jsonify(status="success", user=user_data), 200
+
+
 @auth_bp.post("/register")
 @manager_required
 def register():
